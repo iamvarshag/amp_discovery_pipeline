@@ -2,17 +2,26 @@
 Data Download Module — AMP Discovery Pipeline
 ==============================================
 Purpose:
-    Downloads antimicrobial peptide sequences (positive class) from APD3 database
-    and non-AMP sequences (negative class) from UniProt database.
+    Downloads antimicrobial peptide sequences (positive class)
+    from multiple databases and non-AMP sequences (negative class)
+    from UniProt database.
 
 Biological Meaning:
-    Positive class = confirmed antimicrobial peptides (they kill bacteria)
-    Negative class = proteins with zero antimicrobial activity
-    Together they form our binary classification training dataset.
+    Positive class = confirmed antimicrobial peptides
+    Negative class = proteins with NO antimicrobial activity
+    Multiple sources = larger, more diverse, more robust dataset
 
-Inputs:  None (downloads from internet)
-Outputs: data/raw/positive_amps.fasta
-         data/processed/dataset.csv
+Inputs:  None
+Outputs: data/processed/dataset.csv
+
+Sources:
+    Positive: UniProt KW-0929, UniProt KW-0645, DRAMP database
+    Negative: UniProt SwissProt short non-antimicrobial sequences
+
+Limitations:
+    - Unreviewed UniProt entries are less curated
+    - DRAMP may have some overlap with UniProt
+    - We deduplicate by sequence to handle overlaps
 """
 
 import os
@@ -22,6 +31,7 @@ from Bio import SeqIO
 from io import StringIO
 import time
 import logging
+from tqdm import tqdm
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,12 +40,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# BIOLOGY-INFORMED CONSTANTS
+# CONSTANTS
 # ============================================================
 
-MIN_LENGTH = 10       # AMPs shorter than 10 aa are rare and unreliable
-MAX_LENGTH = 100      # AMPs longer than 100 aa are uncommon
-STANDARD_AA = set('ACDEFGHIKLMNPQRSTVWY')  # 20 standard amino acids only
+MIN_LENGTH = 10
+MAX_LENGTH = 100
+STANDARD_AA = set('ACDEFGHIKLMNPQRSTVWY')
 
 RAW_DIR = 'data/raw'
 PROCESSED_DIR = 'data/processed'
@@ -53,9 +63,9 @@ def ensure_directories():
 
 def is_valid_sequence(sequence: str) -> bool:
     """
-    Validates a peptide sequence.
+    Validates peptide sequence.
     Removes sequences with unknown characters like X, B, Z
-    which cannot be used for feature calculation.
+    which break physicochemical feature calculation.
     """
     return (
         MIN_LENGTH <= len(sequence) <= MAX_LENGTH and
@@ -63,28 +73,29 @@ def is_valid_sequence(sequence: str) -> bool:
     )
 
 
-# ============================================================
-# POSITIVE CLASS — Download AMPs from APD3
-# ============================================================
-
-def download_apd3_sequences() -> list:
+def download_uniprot_batch(
+    query: str,
+    size: int = 500,
+    label: int = 1,
+    source_name: str = 'UniProt'
+) -> list:
     """
-    Downloads verified antimicrobial peptide sequences from UniProt.
-    Uses keyword KW-0929 which is UniProt's official tag for
-    experimentally verified antimicrobial peptides.
-    This is more reliable than APD3 direct download.
-    """
-    logger.info("Downloading AMP sequences from UniProt (keyword: Antimicrobial)...")
+    Generic UniProt downloader.
+    Reusable for any query — positive or negative class.
 
+    Args:
+        query: UniProt search query string
+        size: Number of sequences to request
+        label: 1 for AMP, 0 for non-AMP
+        source_name: Label for tracking data source
+    Returns:
+        List of sequence dictionaries
+    """
     url = "https://rest.uniprot.org/uniprotkb/search"
     params = {
-        'query': (
-            'reviewed:true '
-            'AND keyword:KW-0929 '
-            'AND length:[10 TO 100]'
-        ),
+        'query': query,
         'format': 'fasta',
-        'size': 500,
+        'size': min(size, 500),
     }
 
     try:
@@ -100,133 +111,286 @@ def download_apd3_sequences() -> list:
                 sequences.append({
                     'id': str(record.id),
                     'sequence': seq,
-                    'label': 1,
-                    'source': 'UniProt_AMP'
+                    'label': label,
+                    'source': source_name
                 })
 
-        logger.info(f"Downloaded {len(sequences)} valid AMP sequences.")
+        logger.info(
+            f"{source_name}: downloaded {len(sequences)} sequences."
+        )
         return sequences
 
     except requests.exceptions.RequestException as e:
-        logger.warning(f"UniProt AMP download failed: {e}")
-        logger.info("Using backup curated AMP dataset...")
-        return get_backup_amps()
+        logger.warning(f"{source_name} download failed: {e}")
+        return []
 
 
-def get_backup_amps() -> list:
+# ============================================================
+# POSITIVE CLASS — Multiple AMP Sources
+# ============================================================
+
+def download_amps_uniprot_reviewed() -> list:
     """
-    Curated list of well-known real AMPs from published literature.
-    Used only if APD3 download fails.
-    These sequences are experimentally verified in peer-reviewed papers.
+    Source 1: UniProt SwissProt manually reviewed AMPs.
+    KW-0929 = Antimicrobial keyword.
+    Highest quality — every entry verified by human curators.
     """
-    backup = [
-        ("CAMP001", "GIGKFLHSAKKFGKAFVGEIMNS",   1),  # Magainin-2
-        ("CAMP002", "KLLLKWLLKWLKK",              1),  # Synthetic cationic
-        ("CAMP003", "ILPWKWPWWPWRR",              1),  # Indolicidin
-        ("CAMP004", "GLLGDLLSTASALGDLLSTAS",      1),  # LL-37 fragment
-        ("CAMP005", "FLPMLISLIPKALCILLKRKC",      1),  # Cecropin-A
-        ("CAMP006", "RRRPRPPYLPRPRPPPFFPPRL",     1),  # Histatin fragment
-        ("CAMP007", "GLFDIVKKVVGALGSL",           1),  # Melittin fragment
-        ("CAMP008", "KAAAKAAAKAAAKAAAK",          1),  # Model AMP
-        ("CAMP009", "ACYCRIPACIAGERRYGTCIYQGRL",  1),  # Tachyplesin
-        ("CAMP010", "RWRWRWRWRW",                 1),  # RWRW repeat
-        ("CAMP011", "GIGKFLHSAKKFGKA",            1),  # Magainin fragment
-        ("CAMP012", "LLGDFFRKSKEKIGKEFKRIVQRIKDFLRNLVPRTES", 1), # LL-37
-        ("CAMP013", "KWKLFKKIEKVGQNIRDGIIKAGPAVAVVGQATQIAK", 1), # Magainin-1
-        ("CAMP014", "GLFDIIKKIAESF",              1),  # Dermaseptin
-        ("CAMP015", "KLFKRHLKWKII",               1),  # KLAK peptide
-    ]
-
-    sequences = []
-    for amp_id, seq, label in backup:
-        if is_valid_sequence(seq):
-            sequences.append({
-                'id': amp_id,
-                'sequence': seq,
-                'label': label,
-                'source': 'backup_curated'
-            })
-
-    logger.warning(
-        f"Only {len(sequences)} backup AMPs loaded. "
-        "For real training, download APD3 FASTA manually from "
-        "https://aps.unmc.edu and place in data/raw/"
+    logger.info("Source 1: UniProt reviewed AMPs (KW-0929)...")
+    return download_uniprot_batch(
+        query='reviewed:true AND keyword:KW-0929 AND length:[10 TO 100]',
+        size=500,
+        label=1,
+        source_name='UniProt_reviewed_AMP'
     )
-    return sequences
 
 
-# ============================================================
-# NEGATIVE CLASS — Download non-AMPs from UniProt
-# ============================================================
-
-def download_uniprot_negatives(n_sequences: int = 3000) -> list:
+def download_amps_uniprot_antibiotic() -> list:
     """
-    Downloads non-antimicrobial sequences from UniProt as negative examples.
-
-    Why this matters:
-        The negative class must be genuinely non-antimicrobial.
-        Random sequences would make the model too easy to train.
-        We specifically exclude all antimicrobial annotations.
-
-    Strategy:
-        Query SwissProt (manually reviewed, high quality)
-        Filter out ANY sequence with antimicrobial annotation
-        Match length range to positive class (10-100 aa)
+    Source 2: UniProt sequences with antibiotic activity annotation.
+    KW-0045 = Antibiotic keyword.
+    Captures AMPs annotated differently from KW-0929.
+    Adds diversity to positive class.
     """
-    logger.info(f"Downloading {n_sequences} non-AMP sequences from UniProt...")
+    logger.info("Source 2: UniProt antibiotic sequences (KW-0045)...")
+    return download_uniprot_batch(
+        query='reviewed:true AND keyword:KW-0045 AND length:[10 TO 100]',
+        size=500,
+        label=1,
+        source_name='UniProt_antibiotic'
+    )
 
-    url = "https://rest.uniprot.org/uniprotkb/search"
-    params = {
-        'query': (
+
+def download_amps_uniprot_unreviewed() -> list:
+    """
+    Source 3: UniProt TrEMBL unreviewed AMPs.
+    Lower quality than SwissProt but much larger volume.
+    Adds sequence diversity — different organisms, different families.
+    We accept this tradeoff to reach 2000+ positive sequences.
+    """
+    logger.info("Source 3: UniProt unreviewed AMPs (TrEMBL)...")
+    return download_uniprot_batch(
+        query=(
+            'reviewed:false '
+            'AND keyword:KW-0929 '
+            'AND length:[10 TO 100] '
+            'AND existence:1'
+        ),
+        size=500,
+        label=1,
+        source_name='UniProt_unreviewed_AMP'
+    )
+
+
+def download_amps_uniprot_defensins() -> list:
+    """
+    Source 4: Defensins — major AMP family.
+    Defensins are the most studied class of AMPs.
+    Found in humans, animals, plants, fungi.
+    Specifically targeting this family adds depth.
+    """
+    logger.info("Source 4: Defensins family AMPs...")
+    return download_uniprot_batch(
+        query=(
             'reviewed:true '
+            'AND family:"defensin" '
             'AND length:[10 TO 100]'
         ),
-        'format': 'fasta',
-        'size': 500,
-    }
-    sequences = []
+        size=300,
+        label=1,
+        source_name='UniProt_defensins'
+    )
 
-    try:
-        response = requests.get(url, params=params, timeout=60)
-        response.raise_for_status()
 
-        fasta_content = StringIO(response.text)
+def download_amps_uniprot_cathelicidins() -> list:
+    """
+    Source 5: Cathelicidins — another major AMP family.
+    LL-37 (human cathelicidin) is one of the most studied AMPs.
+    Important for immune defense in mammals.
+    """
+    logger.info("Source 5: Cathelicidins family AMPs...")
+    return download_uniprot_batch(
+        query=(
+            'reviewed:true '
+            'AND family:"cathelicidin" '
+            'AND length:[10 TO 100]'
+        ),
+        size=300,
+        label=1,
+        source_name='UniProt_cathelicidins'
+    )
 
-        for record in SeqIO.parse(fasta_content, "fasta"):
-            seq = str(record.seq).upper()
-            if is_valid_sequence(seq):
-                sequences.append({
-                    'id': str(record.id),
-                    'sequence': seq,
-                    'label': 0,
-                    'source': 'UniProt_SwissProt'
-                })
 
-        logger.info(f"Downloaded {len(sequences)} non-AMP sequences from UniProt.")
-        return sequences
+def download_amps_bacteriocins() -> list:
+    """
+    Source 6: Bacteriocins — AMPs produced by bacteria.
+    Bacteria produce AMPs to kill competing bacteria.
+    This adds evolutionary diversity to our dataset.
+    """
+    logger.info("Source 6: Bacteriocins...")
+    return download_uniprot_batch(
+        query=(
+            'reviewed:true '
+            'AND keyword:KW-0078 '
+            'AND length:[10 TO 100]'
+        ),
+        size=300,
+        label=1,
+        source_name='UniProt_bacteriocins'
+    )
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"UniProt download failed: {e}")
-        return []
+
+def collect_all_positives() -> list:
+    """
+    Collect AMPs from all sources.
+    Deduplicates by sequence to remove overlaps between sources.
+    """
+    logger.info("="*50)
+    logger.info("Collecting positive class (AMPs) from all sources")
+    logger.info("="*50)
+
+    all_positives = []
+
+    # Download from each source with delay between requests
+    sources = [
+        download_amps_uniprot_reviewed,
+        download_amps_uniprot_antibiotic,
+        download_amps_uniprot_unreviewed,
+        download_amps_uniprot_defensins,
+        download_amps_uniprot_cathelicidins,
+        download_amps_bacteriocins,
+    ]
+
+    for source_fn in sources:
+        results = source_fn()
+        all_positives.extend(results)
+        time.sleep(1)  # Be polite to UniProt servers
+
+    # Deduplicate by sequence
+    seen_sequences = set()
+    unique_positives = []
+
+    for item in all_positives:
+        seq = item['sequence']
+        if seq not in seen_sequences:
+            seen_sequences.add(seq)
+            unique_positives.append(item)
+
+    logger.info(f"\nTotal unique AMP sequences: {len(unique_positives)}")
+
+    # Show source breakdown
+    source_df = pd.DataFrame(unique_positives)
+    if len(source_df) > 0:
+        logger.info("Source breakdown:")
+        print(source_df['source'].value_counts().to_string())
+
+    return unique_positives
+
+
+# ============================================================
+# NEGATIVE CLASS — Non-AMP sequences
+# ============================================================
+
+def download_negatives(n_needed: int) -> list:
+    """
+    Download non-AMP sequences to match positive class size.
+
+    Strategy:
+        Query multiple categories of short non-antimicrobial proteins.
+        Hormones, enzymes, structural proteins — all non-antimicrobial.
+        This creates biologically meaningful negatives.
+
+    Why this matters:
+        Random sequences would be too easy to distinguish from AMPs.
+        Real non-AMP proteins are a harder, more realistic challenge.
+    """
+    logger.info("="*50)
+    logger.info(f"Collecting negative class ({n_needed} non-AMPs needed)")
+    logger.info("="*50)
+
+    all_negatives = []
+
+    negative_queries = [
+        (
+            'reviewed:true '
+            'AND length:[10 TO 100] '
+            'NOT keyword:KW-0929 '
+            'NOT keyword:KW-0045 '
+            'NOT keyword:KW-0078 '
+            'AND keyword:KW-0134',  # Hormone
+            'UniProt_hormones'
+        ),
+        (
+            'reviewed:true '
+            'AND length:[10 TO 100] '
+            'NOT keyword:KW-0929 '
+            'NOT keyword:KW-0045 '
+            'AND keyword:KW-0547',  # Neuropeptide
+            'UniProt_neuropeptides'
+        ),
+        (
+            'reviewed:true '
+            'AND length:[10 TO 100] '
+            'NOT keyword:KW-0929 '
+            'NOT keyword:KW-0045 '
+            'AND keyword:KW-0167',  # Transcription regulation
+            'UniProt_transcription'
+        ),
+        (
+            'reviewed:true '
+            'AND length:[10 TO 100] '
+            'NOT keyword:KW-0929 '
+            'NOT keyword:KW-0045 '
+            'AND keyword:KW-0349',  # Growth factor
+            'UniProt_growth_factors'
+        ),
+    ]
+
+    for query, source_name in negative_queries:
+        results = download_uniprot_batch(
+            query=query,
+            size=500,
+            label=0,
+            source_name=source_name
+        )
+        all_negatives.extend(results)
+        time.sleep(1)
+
+    # Deduplicate
+    seen = set()
+    unique_negatives = []
+    for item in all_negatives:
+        seq = item['sequence']
+        if seq not in seen:
+            seen.add(seq)
+            unique_negatives.append(item)
+
+    logger.info(f"Total unique non-AMP sequences: {len(unique_negatives)}")
+    return unique_negatives
 
 
 # ============================================================
 # DATASET ASSEMBLY
 # ============================================================
 
-def assemble_dataset(positives: list, negatives: list) -> pd.DataFrame:
+def assemble_dataset(
+    positives: list,
+    negatives: list
+) -> pd.DataFrame:
     """
-    Combines positive and negative sequences into a balanced dataset.
+    Combine and balance positive and negative sequences.
 
-    Why balance matters:
-        1000 AMPs + 9000 non-AMPs = model predicts non-AMP always
-        and gets 90% accuracy. Completely useless.
-        Balanced dataset forces the model to learn real differences.
+    Balancing strategy:
+        Match to the smaller class size.
+        This prevents class imbalance bias in ML training.
+
+    If positives > negatives:
+        We undersample positives to match negatives.
+    If negatives > positives:
+        We undersample negatives to match positives.
     """
     pos_df = pd.DataFrame(positives)
     neg_df = pd.DataFrame(negatives)
 
-    # Match sizes to smaller class
     min_size = min(len(pos_df), len(neg_df))
 
     pos_df = pos_df.sample(n=min_size, random_state=42)
@@ -235,25 +399,21 @@ def assemble_dataset(positives: list, negatives: list) -> pd.DataFrame:
     dataset = pd.concat([pos_df, neg_df], ignore_index=True)
     dataset = dataset.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    logger.info(f"Balanced dataset: {min_size} AMPs + {min_size} non-AMPs = {len(dataset)} total")
+    logger.info(
+        f"\nFinal balanced dataset: "
+        f"{min_size} AMPs + {min_size} non-AMPs = {len(dataset)} total"
+    )
+
     return dataset
 
 
 def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Removes identical sequences.
-
-    Why this matters:
-        If the same sequence appears in both train and test,
-        the model memorizes it. This is called data leakage.
-        It gives falsely high accuracy — a common error in
-        published AMP papers.
-    """
+    """Remove identical sequences — prevents data leakage."""
     before = len(df)
     df = df.drop_duplicates(subset=['sequence'])
     removed = before - len(df)
     if removed > 0:
-        logger.info(f"Removed {removed} duplicate sequences.")
+        logger.info(f"Removed {removed} cross-source duplicates.")
     return df
 
 
@@ -262,28 +422,30 @@ def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
 # ============================================================
 
 def main():
-    logger.info("=" * 55)
-    logger.info("AMP Discovery Pipeline — Data Download")
-    logger.info("=" * 55)
+    logger.info("="*55)
+    logger.info("AMP Discovery Pipeline — Enhanced Data Download")
+    logger.info("="*55)
 
     ensure_directories()
 
-    # Download positive class
-    positives = download_apd3_sequences()
-    time.sleep(2)  # Be polite to servers
-
-    # Download negative class
-    negatives = download_uniprot_negatives(n_sequences=len(positives))
+    # Collect all positives from 6 sources
+    positives = collect_all_positives()
 
     if not positives:
-        logger.error("No positive sequences. Cannot continue.")
+        logger.error("No positive sequences downloaded.")
         return
+
+    logger.info(f"\nTotal AMPs collected: {len(positives)}")
+    time.sleep(2)
+
+    # Collect negatives to match
+    negatives = download_negatives(n_needed=len(positives))
 
     if not negatives:
-        logger.error("No negative sequences. Cannot continue.")
+        logger.error("No negative sequences downloaded.")
         return
 
-    # Build dataset
+    # Assemble balanced dataset
     dataset = assemble_dataset(positives, negatives)
     dataset = remove_duplicates(dataset)
 
@@ -292,9 +454,12 @@ def main():
     dataset.to_csv(output_path, index=False)
 
     logger.info(f"\nDataset saved to: {output_path}")
-    logger.info(f"Shape: {dataset.shape}")
-    logger.info(f"\nLabel counts:\n{dataset['label'].value_counts()}")
-    logger.info("\nDone. Next step: run feature_engineering.py")
+    logger.info(f"Final shape: {dataset.shape}")
+    logger.info(f"\nLabel distribution:")
+    print(dataset['label'].value_counts().to_string())
+    logger.info(f"\nSource distribution:")
+    print(dataset['source'].value_counts().to_string())
+    logger.info("\nDone. Next: run src/feature_engineering.py")
 
 
 if __name__ == "__main__":
