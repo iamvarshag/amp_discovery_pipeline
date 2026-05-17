@@ -1,0 +1,17 @@
+
+AMP Discovery Pipeline — Training Summary
+==========================================
+Dataset: 1586 sequences (793 AMPs + 793 non-AMPs)
+Features: 30
+Validation: 5-Fold Stratified Cross Validation
+
+Best Model: XGBoost
+
+All Results:
+              Model  Accuracy  AUC_ROC       F1
+Logistic Regression  0.837317 0.900288 0.835777
+      Random Forest  0.912362 0.970476 0.911867
+            XGBoost  0.916773 0.972470 0.915845
+
+Note: All metrics reported as mean across 5 CV folds.
+AUC-ROC is primary metric for AMP classification tasks.
