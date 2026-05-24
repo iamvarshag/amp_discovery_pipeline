@@ -1106,10 +1106,12 @@ def page_predict(models, feature_names):
 
     # ── Tabs ──
     st.markdown("<br>", unsafe_allow_html=True)
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🧠  SHAP Explanation",
         "🔬  Model Consensus",
-        "📋  Full Feature Report"
+        "📋  Full Feature Report",
+        "🧪  Lab Assay Planner",
+        "🛠️  Mutation Playground"
     ])
 
     with tab1:
@@ -1267,6 +1269,527 @@ def page_predict(models, feature_names):
             mime="text/csv"
         )
 
+    with tab4:
+        feats  = result['features']
+        charge = feats.get('charge', 0)
+        hydro  = feats.get('hydrophobic_fraction', 0)
+        length = feats.get('length', len(seq))
+        pos_fr = feats.get('positive_fraction', 0)
+
+        st.markdown("""
+        <div style='font-family:Playfair Display,serif;
+                    font-size:1.1rem; color:#1C2B1E;
+                    margin-bottom:0.5rem;'>
+          🧪 Laboratory Assay Planning Guide
+        </div>
+        <div class="info-box">
+          Based on the physicochemical profile of this specific
+          sequence, the following practical guidance is generated
+          for bench scientists handling this peptide in a wet lab.
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Storage and handling warnings
+        st.markdown("""
+        <div style='font-weight:600; color:#1C2B1E;
+                    font-size:0.9rem; margin:1rem 0 0.5rem;'>
+          📦 Storage and Handling
+        </div>
+        """, unsafe_allow_html=True)
+
+        if charge > 4:
+            st.markdown(f"""
+            <div class="warn-box">
+              ⚠️ <b>Surface Adhesion Risk</b><br>
+              Net charge of <b>{charge:.2f}</b> makes this
+              a highly cationic sequence. Avoid standard
+              untreated plastic or glass storage vials —
+              the peptide will bind to surfaces and reduce
+              effective concentration.<br><br>
+              <b>Action:</b> Use low-binding polypropylene
+              microtiter plates during screening assays.
+              Pre-coat tubes with 0.1% BSA or use
+              siliconized microcentrifuge tubes for storage.
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="info-box">
+              ✅ <b>Storage:</b> Net charge of {charge:.2f}
+              presents low surface adhesion risk. Standard
+              polypropylene tubes are acceptable for storage.
+              Store at -20°C as lyophilized powder for
+              long-term stability.
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Solubility warnings
+        st.markdown("""
+        <div style='font-weight:600; color:#1C2B1E;
+                    font-size:0.9rem; margin:1rem 0 0.5rem;'>
+          💧 Solubility and Dissolution
+        </div>
+        """, unsafe_allow_html=True)
+
+        if hydro > 0.45:
+            st.markdown(f"""
+            <div class="warn-box">
+              ⚠️ <b>Solubility Warning</b><br>
+              Hydrophobic fraction of
+              <b>{hydro*100:.1f}%</b> detected.
+              This sequence is prone to aggregation or
+              precipitation in pure aqueous buffers.<br><br>
+              <b>Dissolution Protocol:</b><br>
+              1. First dissolve in minimal sterile DMSO
+                 (5–10% of final volume)<br>
+              2. Vortex for 30 seconds<br>
+              3. Dilute slowly into PBS or growth media<br>
+              4. Sonicate briefly if aggregation occurs<br>
+              5. Filter through 0.22μm membrane before use<br><br>
+              <b>Alternative:</b> Dissolve in 0.1% acetic acid
+              for cationic peptides before diluting into media.
+            </div>
+            """, unsafe_allow_html=True)
+        elif hydro > 0.35:
+            st.markdown(f"""
+            <div class="warn-box">
+              ⚠️ <b>Moderate Hydrophobicity</b><br>
+              Hydrophobic fraction of {hydro*100:.1f}%.
+              May have limited aqueous solubility at high
+              concentrations (>1mg/mL).<br><br>
+              <b>Action:</b> Test solubility at target
+              concentration before assay. If turbid,
+              add 5% DMSO to clarify solution.
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="info-box">
+              ✅ <b>Solubility:</b> Hydrophobic fraction
+              of {hydro*100:.1f}% suggests good aqueous
+              solubility. Standard PBS dissolution protocol
+              should work. Prepare fresh stock in sterile
+              water at 1–5 mg/mL.
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Proteolytic stability
+        st.markdown("""
+        <div style='font-weight:600; color:#1C2B1E;
+                    font-size:0.9rem; margin:1rem 0 0.5rem;'>
+          🔬 Proteolytic Stability
+        </div>
+        """, unsafe_allow_html=True)
+
+        if length < 15:
+            st.markdown(f"""
+            <div class="warn-box">
+              ⚠️ <b>Proteolytic Stability Risk</b><br>
+              Length of <b>{int(length)} amino acids</b>
+              makes this sequence highly vulnerable to
+              rapid enzymatic degradation in serum or
+              complex biological matrices.<br><br>
+              <b>Actions:</b><br>
+              1. Conduct initial MIC tests in Mueller
+                 Hinton Broth (no serum) to establish
+                 baseline activity<br>
+              2. Add protease inhibitor cocktail if
+                 testing in serum-containing media<br>
+              3. Consider N-terminal acetylation or
+                 C-terminal amidation to improve
+                 proteolytic resistance<br>
+              4. Use D-amino acid substitutions for
+                 key residues if stability is critical
+            </div>
+            """, unsafe_allow_html=True)
+        elif length < 30:
+            st.markdown(f"""
+            <div class="warn-box">
+              ℹ️ <b>Moderate Stability</b><br>
+              Length of {int(length)} aa. Moderate
+              proteolytic susceptibility expected in serum.
+              Half-life in human serum typically 1–4 hours
+              for unmodified peptides of this length.<br><br>
+              <b>Recommendation:</b> Include time-course
+              stability assay alongside MIC testing.
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="info-box">
+              ✅ <b>Stability:</b> Length of {int(length)} aa
+              provides reasonable proteolytic resistance
+              compared to shorter peptides. Standard
+              stability testing protocols apply.
+            </div>
+            """, unsafe_allow_html=True)
+
+        # MIC Testing Protocol
+        st.markdown("""
+        <div style='font-weight:600; color:#1C2B1E;
+                    font-size:0.9rem; margin:1rem 0 0.5rem;'>
+          🦠 Recommended MIC Testing Protocol
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div class="card">
+          <div class="card-label">
+            Standard Broth Microdilution Protocol
+          </div>
+          <div style='font-size:0.83rem; color:#4A6B4D;
+                      line-height:2;'>
+            <b>Reference Standard:</b>
+            CLSI M07-A10 / EUCAST guidelines<br>
+            <b>Growth medium:</b>
+            Mueller Hinton Broth (MHB) pH 7.4<br>
+            <b>Inoculum:</b>
+            5×10⁵ CFU/mL final concentration<br>
+            <b>Concentration range:</b>
+            0.5 – 256 μg/mL (2-fold serial dilutions)<br>
+            <b>Incubation:</b>
+            37°C, 18–20 hours, shaking 200 rpm<br>
+            <b>Readout:</b>
+            Optical density at 600nm (OD600)<br>
+            <b>Controls required:</b><br>
+            &nbsp;&nbsp;• Positive: untreated bacteria<br>
+            &nbsp;&nbsp;• Negative: sterile media only<br>
+            &nbsp;&nbsp;• Reference: known AMP
+            (e.g. Magainin-2 at 32 μg/mL)<br><br>
+            <b>Priority organisms to test:</b><br>
+            &nbsp;&nbsp;• <i>E. coli</i> ATCC 25922
+            (gram-negative reference)<br>
+            &nbsp;&nbsp;• <i>S. aureus</i> ATCC 29213
+            (gram-positive reference)<br>
+            &nbsp;&nbsp;• <i>P. aeruginosa</i> ATCC 27853
+            (gram-negative, harder target)
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Hemolysis warning
+        amp_prob = result['amp_probability']
+        if amp_prob > 0.8 and hydro > 0.4:
+            st.markdown("""
+            <div class="warn-box">
+              ⚠️ <b>Hemolysis Risk Assessment</b><br>
+              High AMP probability combined with elevated
+              hydrophobicity raises hemolysis risk.
+              Before advancing this candidate:<br><br>
+              1. Conduct hemolysis assay using human
+                 red blood cells (hRBCs) at 0.5–512 μg/mL<br>
+              2. Calculate Therapeutic Index:
+                 HC50 (hemolysis) / MIC (bacteria)<br>
+              3. Target Therapeutic Index > 10 for
+                 viable drug candidates<br>
+              4. Sequences with TI > 100 are considered
+                 highly selective candidates
+            </div>
+            """, unsafe_allow_html=True)
+
+    with tab5:
+
+        st.markdown("""
+        <div style='font-family:Playfair Display,serif;
+                    font-size:1.1rem; color:#1C2B1E;
+                    margin-bottom:0.5rem;'>
+          🛠️ Mutation Playground
+        </div>
+        <div class="info-box">
+          Simulate how changing physicochemical properties
+          affects AMP probability. Move the sliders to
+          explore sequence optimization strategies without
+          touching the actual sequence.
+          This is a simplified model for intuition building
+          — not a replacement for full prediction.
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Get base values
+        base_charge  = float(result['features'].get('charge', 2))
+        base_hydro   = float(result['features'].get(
+            'hydrophobic_fraction', 0.4
+        ))
+        base_length  = int(result['features'].get('length', 25))
+        base_pos_fr  = float(result['features'].get(
+            'positive_fraction', 0.15
+        ))
+        base_prob    = float(result['amp_probability'])
+
+        st.markdown("""
+        <div style='font-weight:600; color:#1C2B1E;
+                    font-size:0.88rem; margin:1rem 0 0.5rem;'>
+          Adjust Peptide Properties
+        </div>
+        """, unsafe_allow_html=True)
+
+        sl1, sl2 = st.columns(2)
+
+        with sl1:
+            sim_charge = st.slider(
+                "⚡ Simulated Net Charge",
+                min_value=-5.0,
+                max_value=15.0,
+                value=round(base_charge, 1),
+                step=0.5,
+                help="Increase by adding K or R residues. "
+                     "Decrease by adding D or E residues."
+            )
+
+            sim_hydro = st.slider(
+                "💧 Simulated Hydrophobic Fraction",
+                min_value=0.0,
+                max_value=1.0,
+                value=round(base_hydro, 2),
+                step=0.05,
+                help="Increase by adding L, V, I, F, W residues."
+            )
+
+        with sl2:
+            sim_length = st.slider(
+                "📏 Simulated Length (aa)",
+                min_value=5,
+                max_value=100,
+                value=base_length,
+                step=1,
+                help="Shorter peptides are cheaper to synthesize."
+            )
+
+            sim_pos_fr = st.slider(
+                "➕ Simulated Positive Residue Fraction",
+                min_value=0.0,
+                max_value=0.8,
+                value=round(base_pos_fr, 2),
+                step=0.05,
+                help="Fraction of K, R, H residues."
+            )
+
+        # Simplified prediction equation
+        # Based on biological weights from SHAP analysis
+        def simulate_amp_probability(
+            charge, hydro, length, pos_fr
+        ):
+            """
+            Lightweight linear model for simulation.
+            Weights derived from SHAP feature importance.
+            Not a replacement for full XGBoost prediction.
+            """
+            score = 0.5  # baseline
+
+            # Charge contribution (SHAP rank 4)
+            if charge >= 2:
+                score += min(charge * 0.025, 0.2)
+            else:
+                score -= abs(charge) * 0.03
+
+            # Hydrophobicity contribution
+            if 0.3 <= hydro <= 0.6:
+                score += 0.08
+            elif hydro > 0.6:
+                score -= 0.05
+            else:
+                score -= 0.06
+
+            # Length contribution (SHAP rank 2)
+            if 10 <= length <= 50:
+                score += 0.06
+            elif length > 80:
+                score -= 0.08
+
+            # Positive fraction (SHAP rank 9)
+            if pos_fr >= 0.15:
+                score += pos_fr * 0.3
+            else:
+                score -= 0.05
+
+            return float(np.clip(score, 0.01, 0.99))
+
+        sim_prob = simulate_amp_probability(
+            sim_charge, sim_hydro, sim_length, sim_pos_fr
+        )
+
+        prob_change = sim_prob - base_prob
+        change_direction = "increased" if prob_change > 0 \
+                           else "decreased"
+        change_color = "#2D7A3A" if prob_change > 0 \
+                       else "#C0606A"
+
+        # Display results
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        r1, r2, r3 = st.columns(3)
+
+        with r1:
+            st.markdown(f"""
+            <div class="card" style='text-align:center;'>
+              <div class="card-label">Original Probability</div>
+              <div style='font-family:JetBrains Mono,monospace;
+                          font-size:2rem; font-weight:600;
+                          color:#4A6B4D;'>
+                {base_prob*100:.1f}%
+              </div>
+              <div style='font-size:0.75rem; color:#8AB08C;'>
+                From XGBoost model
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with r2:
+            st.markdown(f"""
+            <div class="card" style='text-align:center;'>
+              <div class="card-label">Simulated Probability</div>
+              <div style='font-family:JetBrains Mono,monospace;
+                          font-size:2rem; font-weight:600;
+                          color:{change_color};'>
+                {sim_prob*100:.1f}%
+              </div>
+              <div style='font-size:0.75rem; color:#8AB08C;'>
+                From simulation model
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with r3:
+            st.markdown(f"""
+            <div class="card" style='text-align:center;'>
+              <div class="card-label">Change</div>
+              <div style='font-family:JetBrains Mono,monospace;
+                          font-size:2rem; font-weight:600;
+                          color:{change_color};'>
+                {prob_change*100:+.1f}%
+              </div>
+              <div style='font-size:0.75rem; color:#8AB08C;'>
+                AMP probability {change_direction}
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Visual probability bar
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.progress(float(sim_prob))
+
+        # Interpretation
+        if sim_prob > base_prob + 0.05:
+            interp_color = "#2D7A3A"
+            interp_bg    = "#EAF4EC"
+            interp = f"""
+            ✅ Your modifications improved predicted
+            AMP probability by {prob_change*100:.1f}%.
+            The changes you made are moving the sequence
+            toward a stronger antimicrobial profile.
+            """
+        elif sim_prob < base_prob - 0.05:
+            interp_color = "#C0606A"
+            interp_bg    = "#FCEEF0"
+            interp = f"""
+            ❌ Your modifications decreased predicted
+            AMP probability by {abs(prob_change)*100:.1f}%.
+            These changes are moving away from an
+            antimicrobial profile.
+            """
+        else:
+            interp_color = "#E8923A"
+            interp_bg    = "#FEF3E2"
+            interp = """
+            ↔️ Your modifications had minimal impact
+            on predicted AMP probability. Try more
+            significant changes — increase charge
+            above +4 or adjust hydrophobicity
+            toward 35–50% range.
+            """
+
+        st.markdown(f"""
+        <div style='background:{interp_bg};
+                    border-left:3px solid {interp_color};
+                    border-radius:0 8px 8px 0;
+                    padding:1rem 1.25rem;
+                    font-size:0.85rem;
+                    color:{interp_color};
+                    line-height:1.8;
+                    margin-top:1rem;'>
+          {interp}
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Optimization suggestions
+        st.markdown("""
+        <div style='font-weight:600; color:#1C2B1E;
+                    font-size:0.88rem; margin:1.25rem 0 0.75rem;'>
+          💡 Optimization Strategies Based On Your Sequence
+        </div>
+        """, unsafe_allow_html=True)
+
+        suggestions = []
+
+        if base_charge < 2:
+            suggestions.append(
+                "🔴 **Increase charge:** Add Lysine (K) or "
+                "Arginine (R) residues. Target net charge +2 to +6."
+            )
+        if base_hydro < 0.3:
+            suggestions.append(
+                "🔴 **Increase hydrophobicity:** Add Leucine (L), "
+                "Valine (V), or Isoleucine (I). "
+                "Target 35–50% hydrophobic residues."
+            )
+        if base_hydro > 0.6:
+            suggestions.append(
+                "🔴 **Reduce hydrophobicity:** Too hydrophobic "
+                "sequences cause toxicity. Replace some L/V/I "
+                "with Glycine (G) or Serine (S)."
+            )
+        if base_length > 60:
+            suggestions.append(
+                "🟡 **Consider truncation:** Shorter sequences "
+                "(15–35 aa) are cheaper to synthesize and "
+                "penetrate tissues better. Identify the "
+                "minimal active region."
+            )
+        if base_pos_fr < 0.15:
+            suggestions.append(
+                "🔴 **Increase cationic character:** "
+                "Positive residue fraction below 15%. "
+                "Add K or R at positions 2, 5, 9 "
+                "(helix-stabilizing positions)."
+            )
+        if base_prob > 0.85:
+            suggestions.append(
+                "✅ **Strong candidate:** This sequence already "
+                "has a strong AMP profile. Focus on checking "
+                "hemolysis risk and proteolytic stability "
+                "rather than further optimization."
+            )
+
+        if not suggestions:
+            suggestions.append(
+                "✅ This sequence has a balanced physicochemical "
+                "profile. No major optimization flags detected."
+            )
+
+        for s in suggestions:
+            st.markdown(f"""
+            <div style='background:#F7FBF8;
+                        border-radius:8px;
+                        padding:10px 14px;
+                        margin-bottom:8px;
+                        font-size:0.83rem;
+                        color:#2D5A35;
+                        line-height:1.7;'>
+              {s}
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <div class="warn-box" style='margin-top:1rem;'>
+          ⚠️ <b>Simulation Disclaimer:</b>
+          The Mutation Playground uses a simplified
+          linear approximation based on SHAP feature weights.
+          It is designed for intuition building and
+          directional guidance only. Always validate
+          optimized sequences through the full XGBoost
+          prediction pipeline and wet lab confirmation.
+        </div>
+        """, unsafe_allow_html=True)
 # ============================================================
 # PAGE: DATASET
 # ============================================================
