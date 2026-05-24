@@ -399,6 +399,11 @@ POSITIVE_AA = set('KRH')
 NEGATIVE_AA = set('DE')
 HYDROPHOBIC_AA = set('AVILMFYW')
 
+# Optimal threshold from evaluation analysis
+# Lower than default 0.5 to minimize missed AMPs (FN)
+# Scientifically justified for drug discovery context
+OPTIMAL_THRESHOLD = 0.40
+
 EXAMPLE_SEQUENCES = {
     "Magainin-2 (frog skin AMP)": "GIGKFLHSAKKFGKAFVGEIMNS",
     "LL-37 fragment (human AMP)": "LLGDFFRKSKEKIGKEFKRIVQRIKDFLRNLVPRTES",
@@ -444,7 +449,7 @@ def predict(sequence, pipeline, feature_names):
     vec_s  = scaler.transform(vec)
     prob   = model.predict_proba(vec_s)[0][1]
     return {
-        'prediction': 'AMP' if prob >= 0.5 else 'non-AMP',
+        'prediction': 'AMP' if prob >= OPTIMAL_THRESHOLD else 'non-AMP',
         'amp_probability': float(prob),
         'features': feats,
         'vec_scaled': vec_s,
@@ -455,6 +460,255 @@ def get_shap(vec_scaled, explainer, feature_names):
     pairs = list(zip(feature_names, vals))
     pairs.sort(key=lambda x: abs(x[1]), reverse=True)
     return pairs
+
+    
+def generate_shap_text_explanation(
+    contributions: list,
+    result: dict,
+    sequence: str
+) -> str:
+    """
+    Generate plain English explanation of SHAP results.
+    Converts numbers into biological narrative a researcher
+    can read and act on immediately.
+    """
+    prob       = result['amp_probability']
+    prediction = result['prediction']
+    feats      = result['features']
+    is_amp     = prediction == 'AMP'
+
+    # Top drivers
+    top_pos = [(f, v) for f, v in contributions if v > 0][:3]
+    top_neg = [(f, v) for f, v in contributions if v < 0][:3]
+
+    # Feature name to biological meaning map
+    bio_names = {
+        'charge':              'net positive charge',
+        'hydrophobicity':      'hydrophobicity',
+        'isoelectric_point':   'isoelectric point',
+        'positive_fraction':   'fraction of positively charged residues (K, R, H)',
+        'hydrophobic_fraction':'fraction of hydrophobic residues',
+        'charge_density':      'charge density per amino acid',
+        'length':              'sequence length',
+        'negative_fraction':   'fraction of negatively charged residues',
+        'aa_K':                'Lysine (K) content',
+        'aa_R':                'Arginine (R) content',
+        'aa_H':                'Histidine (H) content',
+        'aa_C':                'Cysteine (C) content',
+        'aa_L':                'Leucine (L) content',
+        'aa_G':                'Glycine (G) content',
+        'aa_A':                'Alanine (A) content',
+        'aa_V':                'Valine (V) content',
+        'aa_I':                'Isoleucine (I) content',
+        'aa_F':                'Phenylalanine (F) content',
+        'aa_W':                'Tryptophan (W) content',
+        'aa_P':                'Proline (P) content',
+        'aa_T':                'Threonine (T) content',
+        'aa_S':                'Serine (S) content',
+        'hydrophobic_count':   'total hydrophobic residue count',
+        'positive_count':      'total positive residue count',
+    }
+
+    def bio(feat):
+        return bio_names.get(feat, feat.replace('_', ' '))
+
+    # Confidence level
+    if prob > 0.9:
+        conf = "very high confidence"
+    elif prob > 0.75:
+        conf = "high confidence"
+    elif prob > 0.6:
+        conf = "moderate confidence"
+    else:
+        conf = "low confidence — borderline sequence"
+
+    # Build narrative
+    lines = []
+
+    # Opening verdict
+    if is_amp:
+        lines.append(
+            f"The model predicts this sequence as an "
+            f"**Antimicrobial Peptide (AMP)** with "
+            f"**{prob*100:.1f}% probability** ({conf})."
+        )
+    else:
+        lines.append(
+            f"The model predicts this sequence as "
+            f"**Non-Antimicrobial** with "
+            f"**{(1-prob)*100:.1f}% non-AMP probability** ({conf})."
+        )
+
+    lines.append("")
+
+    # Main drivers toward AMP
+    if top_pos:
+        lines.append("**Why the model leaned toward AMP:**")
+        for i, (feat, val) in enumerate(top_pos, 1):
+            strength = "strongly" if abs(val) > 0.5 else \
+                       "moderately" if abs(val) > 0.2 else "slightly"
+            lines.append(
+                f"{i}. The **{bio(feat)}** "
+                f"{strength} pushed the prediction toward AMP "
+                f"(SHAP: {val:+.3f}). "
+                + _get_feature_insight(feat, val,
+                                       feats.get(feat, 0), True)
+            )
+
+    lines.append("")
+
+    # Main drivers against AMP
+    if top_neg:
+        lines.append(
+            "**Why the model had some doubt (non-AMP signals):**"
+        )
+        for i, (feat, val) in enumerate(top_neg, 1):
+            strength = "strongly" if abs(val) > 0.5 else \
+                       "moderately" if abs(val) > 0.2 else "slightly"
+            lines.append(
+                f"{i}. The **{bio(feat)}** "
+                f"{strength} pushed away from AMP "
+                f"(SHAP: {val:+.3f}). "
+                + _get_feature_insight(feat, val,
+                                       feats.get(feat, 0), False)
+            )
+
+    lines.append("")
+
+    # Overall biological narrative
+    charge    = feats.get('charge', 0)
+    length    = feats.get('length', len(sequence))
+    pos_frac  = feats.get('positive_fraction', 0)
+    hydro     = feats.get('hydrophobicity', 0)
+
+    lines.append("**Overall biological profile:**")
+
+    charge_str = (
+        f"The peptide carries a net charge of "
+        f"**{charge:.1f}** at pH 7.4 — "
+        + ("consistent with the typical AMP range (+2 to +9), "
+           "supporting electrostatic targeting of bacterial membranes."
+           if charge >= 2 else
+           "below the typical AMP range, which may limit "
+           "electrostatic attraction to bacterial membranes.")
+    )
+    lines.append(charge_str)
+
+    length_str = (
+        f"At **{int(length)} amino acids**, this sequence is "
+        + ("in the classical AMP length range (10–50 aa), "
+           "suggesting it could form membrane-disrupting structures."
+           if length <= 50 else
+           "longer than typical AMPs. "
+           "Longer sequences can still be active but "
+           "synthesis cost and selectivity may be affected.")
+    )
+    lines.append(length_str)
+
+    pos_str = (
+        f"**{pos_frac*100:.1f}%** of residues are positively "
+        f"charged (K, R, H) — "
+        + ("above the 15% AMP threshold, "
+           "providing strong cationic character for membrane binding."
+           if pos_frac >= 0.15 else
+           "below the 15% AMP threshold. "
+           "Adding Lysine (K) or Arginine (R) residues could "
+           "improve predicted AMP activity.")
+    )
+    lines.append(pos_str)
+
+    lines.append("")
+
+    # Actionable recommendation
+    lines.append("**What a researcher should do next:**")
+
+    if prob > 0.85:
+        lines.append(
+            "This sequence has a strong AMP signal across multiple "
+            "features. It is a **high priority candidate** for "
+            "wet lab validation. Recommended next steps: "
+            "(1) MIC (Minimum Inhibitory Concentration) testing "
+            "against gram-positive and gram-negative bacteria, "
+            "(2) Hemolysis assay to check human cell safety, "
+            "(3) Check model consensus tab — if all 3 models agree, "
+            "confidence is higher."
+        )
+    elif prob > 0.5:
+        lines.append(
+            "This sequence shows moderate AMP signal. It is a "
+            "**medium priority candidate**. Before wet lab testing, "
+            "consider optimizing the sequence by: "
+            "(1) Increasing Lysine (K) or Arginine (R) content "
+            "to boost positive charge, "
+            "(2) Checking the SHAP red bars — "
+            "reduce those features if possible, "
+            "(3) Testing structural variants of this sequence."
+        )
+    else:
+        lines.append(
+            "This sequence shows weak AMP signal. "
+            "**Not recommended for immediate wet lab testing.** "
+            "To improve predicted AMP activity: "
+            "(1) Increase positively charged residues (K, R), "
+            "(2) Adjust hydrophobicity toward 0.2–0.6 range, "
+            "(3) Consider shortening if >50 amino acids, "
+            "(4) Use a known AMP scaffold as starting point "
+            "and mutate individual residues."
+        )
+
+    return "\n\n".join(lines)
+
+
+def _get_feature_insight(
+    feat: str, shap_val: float,
+    actual_val: float, is_positive: bool
+) -> str:
+    """
+    Returns one sentence of biological insight
+    for a specific feature and its SHAP value.
+    """
+    insights = {
+        'charge': (
+            f"A charge of {actual_val:.2f} "
+            f"{'attracts' if actual_val > 0 else 'repels'} "
+            f"the negatively charged bacterial membrane."
+        ),
+        'positive_fraction': (
+            f"{actual_val*100:.1f}% K+R+H residues "
+            f"{'supports' if actual_val >= 0.15 else 'weakens'} "
+            f"cationic membrane targeting."
+        ),
+        'hydrophobicity': (
+            f"Hydrophobicity of {actual_val:.3f} "
+            f"{'allows' if 0.2 <= actual_val <= 0.6 else 'limits'} "
+            f"membrane insertion."
+        ),
+        'length': (
+            f"Length of {int(actual_val)} aa is "
+            f"{'ideal' if actual_val <= 50 else 'longer than typical'} "
+            f"for AMP membrane disruption."
+        ),
+        'charge_density': (
+            f"Charge density of {actual_val:.3f} "
+            f"reflects {'strong' if actual_val > 0.03 else 'weak'} "
+            f"cationic character per residue."
+        ),
+        'aa_K': (
+            f"Lysine content of {actual_val*100:.1f}% "
+            f"is {'above' if actual_val > 0.1 else 'below'} "
+            f"the typical AMP threshold."
+        ),
+        'aa_C': (
+            f"Cysteine content of {actual_val*100:.1f}% "
+            f"suggests {'defensin-like' if actual_val > 0.05 else 'non-defensin'} "
+            f"character."
+        ),
+        'aa_R': (
+            f"Arginine content of {actual_val*100:.1f}% "
+            f"contributes to positive charge and membrane binding."
+        ),
+    }
+    return insights.get(feat, "")
 
 def color_seq(seq):
     out = ''

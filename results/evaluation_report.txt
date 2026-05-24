@@ -1,0 +1,41 @@
+
+AMP Discovery Pipeline — Complete Evaluation Report
+====================================================
+Dataset: 1586 sequences
+AMPs: 793 | non-AMPs: 793
+Validation: 5-Fold Stratified Cross Validation
+
+CONFUSION MATRIX:
+  True Positives:  719 (correctly identified AMPs)
+  True Negatives:  735 (correctly rejected non-AMPs)
+  False Positives: 58 (non-AMPs wrongly called AMP)
+  False Negatives: 74 (missed real AMPs — worst error)
+
+PERFORMANCE METRICS:
+  Accuracy:          91.68%
+  Balanced Accuracy: 91.68%
+  Precision:         92.54%
+  Recall:            90.67%
+  Specificity:       92.69%
+  F1 Score:          91.59%
+  MCC:               0.8337
+  FP Rate:           7.31%
+  FN Rate:           9.33%
+
+THRESHOLD ANALYSIS:
+  Default threshold:     0.50
+  Best F1 threshold:     0.59
+  Best MCC threshold:    0.62
+  High Recall threshold: 0.10
+
+ERROR SUMMARY:
+error_type
+True Negative     735
+True Positive     719
+False Negative     74
+False Positive     58
+
+RECOMMENDATION:
+  For drug discovery use threshold = 0.10
+  This maximizes recall (catching real AMPs) at cost of
+  some false positives (acceptable in drug discovery context).

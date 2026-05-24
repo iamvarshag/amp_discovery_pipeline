@@ -163,7 +163,7 @@ def get_models():
                 n_jobs=-1
             ))
         ]),
-
+        
         'XGBoost': Pipeline([
             ('scaler', StandardScaler()),
             ('model', xgb.XGBClassifier(
@@ -177,7 +177,6 @@ def get_models():
                 verbosity=0
             ))
         ]),
-
     }
 
     return models
